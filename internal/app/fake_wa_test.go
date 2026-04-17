@@ -30,6 +30,7 @@ type fakeWA struct {
 	groups   map[types.JID]*types.GroupInfo
 
 	onDemandHistory func(lastKnown types.MessageInfo, count int) *events.HistorySync
+	isOnWhatsAppFn  func(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error)
 }
 
 func newFakeWA() *fakeWA {
@@ -253,4 +254,31 @@ func (f *fakeWA) Logout(ctx context.Context) error {
 
 func (f *fakeWA) PairPhone(ctx context.Context, phone string) (string, error) {
 	return "TESTCODE", nil
+}
+
+// isOnWhatsAppFn lets individual tests override resolution behaviour.
+func (f *fakeWA) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
+	f.mu.Lock()
+	fn := f.isOnWhatsAppFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, phones)
+	}
+	// Default: treat every queried phone as registered, using the digits
+	// as the JID user. Good enough for happy-path send tests.
+	out := make([]types.IsOnWhatsAppResponse, 0, len(phones))
+	for _, p := range phones {
+		digits := ""
+		for _, r := range p {
+			if r >= '0' && r <= '9' {
+				digits += string(r)
+			}
+		}
+		out = append(out, types.IsOnWhatsAppResponse{
+			Query: p,
+			JID:   types.JID{User: digits, Server: types.DefaultUserServer},
+			IsIn:  true,
+		})
+	}
+	return out, nil
 }

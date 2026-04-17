@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steipete/wacli/internal/ipc"
 	"github.com/steipete/wacli/internal/out"
-	"github.com/steipete/wacli/internal/wa"
 )
 
 func newSendFileCmd(flags *rootFlags) *cobra.Command {
@@ -23,12 +22,19 @@ func newSendFileCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "file",
 		Short: "Send a file (image/video/audio/document)",
+		Long: `Send a file via WhatsApp. Type is auto-detected from the MIME type
+(image/video/audio fall back to document).
+
+Phone numbers are resolved to a canonical JID the same way as 'send
+text' (MX/BR/AR country-code aware). The send operation has a 30s
+deadline by default; override with --timeout (e.g. --timeout 2m for
+large files).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if to == "" || filePath == "" {
 				return fmt.Errorf("--to and --file are required")
 			}
 
-			ctx, cancel := withTimeout(context.Background(), flags)
+			ctx, cancel := context.WithTimeout(context.Background(), sendTimeout(cmd, flags))
 			defer cancel()
 
 			if !noDaemon {
@@ -52,7 +58,7 @@ func newSendFileCmd(flags *rootFlags) *cobra.Command {
 				return err
 			}
 
-			toJID, err := wa.ParseUserOrJID(to)
+			toJID, err := a.ResolveRecipient(ctx, to)
 			if err != nil {
 				return err
 			}

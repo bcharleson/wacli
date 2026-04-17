@@ -247,6 +247,22 @@ func (c *Client) RequestHistorySyncOnDemand(ctx context.Context, lastKnown types
 	return resp.ID, nil
 }
 
+// IsOnWhatsApp checks whether the given phone numbers are registered on
+// WhatsApp. Numbers must be in E.164 format with the leading `+`.
+// This is used to resolve a phone number to its canonical JID before
+// sending, which sidesteps whatsmeow's internal (unbounded) usync lookup
+// during SendMessage — that lookup can hang forever for numbers where
+// the JID differs from the E.164 form (Mexico, Brazil, Argentina, etc.).
+func (c *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil || !cli.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+	return cli.IsOnWhatsApp(ctx, phones)
+}
+
 func ParseUserOrJID(s string) (types.JID, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -4,13 +4,29 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steipete/wacli/internal/config"
 	"github.com/steipete/wacli/internal/ipc"
 	"github.com/steipete/wacli/internal/out"
-	"github.com/steipete/wacli/internal/wa"
 )
+
+// defaultSendTimeout is the ceiling for a single send operation when the
+// user has not explicitly passed --timeout. The global --timeout default
+// of 5 minutes is too long for interactive use and hides issues like
+// whatsmeow's unbounded usync lookup hanging on unresolved phone numbers.
+const defaultSendTimeout = 30 * time.Second
+
+// sendTimeout returns the effective send timeout. If the user passed
+// --timeout on the command line we honour their value exactly;
+// otherwise we use the shorter default so failures surface quickly.
+func sendTimeout(cmd *cobra.Command, flags *rootFlags) time.Duration {
+	if cmd.Flags().Changed("timeout") {
+		return flags.timeout
+	}
+	return defaultSendTimeout
+}
 
 func newSendCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
@@ -40,12 +56,22 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "text",
 		Short: "Send a text message",
+		Long: `Send a WhatsApp text message.
+
+Phone numbers are accepted in E.164 form (+525562237227). The recipient
+is resolved to a canonical JID via IsOnWhatsApp before sending, with
+country-code aware fallbacks for Mexico (52 vs 521), Brazil (55 with/
+without the leading 9), and Argentina (54 vs 549). Pass a full JID
+(user@s.whatsapp.net) to skip resolution.
+
+The send operation has a 30s deadline by default; override with
+--timeout (e.g. --timeout 2m for large media).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if to == "" || message == "" {
 				return fmt.Errorf("--to and --message are required")
 			}
 
-			ctx, cancel := withTimeout(context.Background(), flags)
+			ctx, cancel := context.WithTimeout(context.Background(), sendTimeout(cmd, flags))
 			defer cancel()
 
 			// Fast path: route through the running daemon if present.
@@ -71,7 +97,7 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 				return err
 			}
 
-			toJID, err := wa.ParseUserOrJID(to)
+			toJID, err := a.ResolveRecipient(ctx, to)
 			if err != nil {
 				return err
 			}

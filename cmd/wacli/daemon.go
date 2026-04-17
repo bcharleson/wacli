@@ -11,7 +11,6 @@ import (
 	appPkg "github.com/steipete/wacli/internal/app"
 	"github.com/steipete/wacli/internal/config"
 	"github.com/steipete/wacli/internal/ipc"
-	"github.com/steipete/wacli/internal/wa"
 )
 
 // appHandler adapts *app.App to the ipc.Handler interface. It is kept as
@@ -30,7 +29,7 @@ func (h *appHandler) Status(ctx context.Context) (ipc.StatusResponse, error) {
 }
 
 func (h *appHandler) SendText(ctx context.Context, req ipc.SendTextRequest) (ipc.SendTextResponse, error) {
-	toJID, err := wa.ParseUserOrJID(req.To)
+	toJID, err := h.a.ResolveRecipient(ctx, req.To)
 	if err != nil {
 		return ipc.SendTextResponse{}, err
 	}
@@ -46,7 +45,7 @@ func (h *appHandler) SendText(ctx context.Context, req ipc.SendTextRequest) (ipc
 }
 
 func (h *appHandler) SendFile(ctx context.Context, req ipc.SendFileRequest) (ipc.SendFileResponse, error) {
-	toJID, err := wa.ParseUserOrJID(req.To)
+	toJID, err := h.a.ResolveRecipient(ctx, req.To)
 	if err != nil {
 		return ipc.SendFileResponse{}, err
 	}
