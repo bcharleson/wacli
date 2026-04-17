@@ -250,3 +250,7 @@ func (f *fakeWA) Logout(ctx context.Context) error {
 	f.authed = false
 	return nil
 }
+
+func (f *fakeWA) PairPhone(ctx context.Context, phone string) (string, error) {
+	return "TESTCODE", nil
+}

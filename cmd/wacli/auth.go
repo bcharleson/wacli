@@ -16,10 +16,11 @@ func newAuthCmd(flags *rootFlags) *cobra.Command {
 	var follow bool
 	var idleExit time.Duration
 	var downloadMedia bool
+	var phone string
 
 	cmd := &cobra.Command{
 		Use:   "auth",
-		Short: "Authenticate with WhatsApp (QR) and bootstrap sync",
+		Short: "Authenticate with WhatsApp (QR or phone number) and bootstrap sync",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext()
 			defer stop()
@@ -30,6 +31,52 @@ func newAuthCmd(flags *rootFlags) *cobra.Command {
 			}
 			defer closeApp(a, lk)
 
+			// Phone number pairing flow (no QR needed).
+			if phone != "" {
+				fmt.Fprintln(os.Stderr, "Starting phone number pairing…")
+				if err := a.OpenWA(); err != nil {
+					return err
+				}
+				code, err := a.WA().PairPhone(ctx, phone)
+				if err != nil {
+					return fmt.Errorf("phone pairing failed: %w", err)
+				}
+				fmt.Fprintf(os.Stderr, "\n========================================\n")
+				fmt.Fprintf(os.Stderr, "  Pairing code: %s\n", code)
+				fmt.Fprintf(os.Stderr, "========================================\n\n")
+				fmt.Fprintln(os.Stderr, "On the phone, go to:")
+				fmt.Fprintln(os.Stderr, "  WhatsApp → Settings → Linked Devices → Link a Device")
+				fmt.Fprintln(os.Stderr, "  → \"Link with phone number instead\"")
+				fmt.Fprintf(os.Stderr, "  → Enter the code: %s\n\n", code)
+				fmt.Fprintln(os.Stderr, "Waiting for pairing to complete…")
+
+				// Wait for the pairing to succeed by polling auth status.
+				ticker := time.NewTicker(2 * time.Second)
+				defer ticker.Stop()
+				timeout := time.After(5 * time.Minute)
+				for {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-timeout:
+						return fmt.Errorf("pairing timed out after 5 minutes")
+					case <-ticker.C:
+						if a.WA().IsAuthed() {
+							fmt.Fprintln(os.Stderr, "Paired successfully!")
+							if flags.asJSON {
+								return out.WriteJSON(os.Stdout, map[string]interface{}{
+									"authenticated": true,
+									"method":        "phone",
+								})
+							}
+							fmt.Fprintln(os.Stdout, "Authenticated via phone number pairing.")
+							return nil
+						}
+					}
+				}
+			}
+
+			// Standard QR code flow.
 			mode := appPkg.SyncModeBootstrap
 			if follow {
 				mode = appPkg.SyncModeFollow
@@ -68,6 +115,7 @@ func newAuthCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&follow, "follow", false, "keep syncing after auth")
 	cmd.Flags().DurationVar(&idleExit, "idle-exit", 30*time.Second, "exit after being idle (bootstrap/once modes)")
 	cmd.Flags().BoolVar(&downloadMedia, "download-media", false, "download media in the background during sync")
+	cmd.Flags().StringVar(&phone, "phone", "", "pair using phone number instead of QR (e.g. +521234567890)")
 
 	cmd.AddCommand(newAuthStatusCmd(flags))
 	cmd.AddCommand(newAuthLogoutCmd(flags))
