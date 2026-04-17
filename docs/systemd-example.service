@@ -1,0 +1,35 @@
+# Example systemd unit for running `wacli daemon` under an agent/bot user.
+#
+# Install:
+#   1. Copy this file to /etc/systemd/system/wacli.service (edit as needed).
+#   2. Make sure the device has been paired once via `wacli auth --phone +...`
+#      (the daemon never prompts for QR / phone pairing).
+#   3. systemctl daemon-reload
+#      systemctl enable --now wacli.service
+#      systemctl status wacli.service
+#      journalctl -u wacli -f
+#
+# Once the service is running, `wacli send text --to +... --message "hi"`
+# will automatically route through the daemon over the Unix socket — no
+# "store is locked" errors.
+
+[Unit]
+Description=wacli WhatsApp sync daemon
+Documentation=https://github.com/steipete/wacli
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust to the user that owns $WACLI_STORE_DIR on the host.
+User=root
+Environment=WACLI_STORE_DIR=/root/.wacli
+ExecStart=/usr/local/bin/wacli daemon
+Restart=on-failure
+RestartSec=5s
+# Give the daemon time to drain the sync loop and remove its socket.
+TimeoutStopSec=15s
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

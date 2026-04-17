@@ -41,6 +41,7 @@ func execute(args []string) error {
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newDoctorCmd(&flags))
 	rootCmd.AddCommand(newAuthCmd(&flags))
+	rootCmd.AddCommand(newDaemonCmd(&flags))
 	rootCmd.AddCommand(newSyncCmd(&flags))
 	rootCmd.AddCommand(newMessagesCmd(&flags))
 	rootCmd.AddCommand(newSendCmd(&flags))

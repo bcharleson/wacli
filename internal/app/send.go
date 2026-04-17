@@ -1,7 +1,8 @@
-package main
+package app
 
 import (
 	"context"
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steipete/wacli/internal/app"
 	"github.com/steipete/wacli/internal/store"
 	"github.com/steipete/wacli/internal/wa"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -17,13 +17,70 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func sendFile(ctx context.Context, a interface {
-	WA() app.WAClient
-	DB() *store.DB
-}, to types.JID, filePath, filename, caption, mimeOverride string) (string, map[string]string, error) {
+// SendTextResult is what both the in-process and IPC-delegated send paths
+// return after a successful text send.
+type SendTextResult struct {
+	MsgID    string
+	ChatJID  string
+	ChatName string
+}
+
+// SendFileResult is what both the in-process and IPC-delegated send paths
+// return after a successful file send.
+type SendFileResult struct {
+	MsgID     string
+	ChatJID   string
+	ChatName  string
+	Filename  string
+	MimeType  string
+	MediaType string
+}
+
+// SendTextAndRecord sends a WhatsApp text message and records the outbound
+// row in the local DB exactly once. Used by both `wacli send text`
+// (in-process) and the daemon's IPC handler.
+func (a *App) SendTextAndRecord(ctx context.Context, to types.JID, message string) (SendTextResult, error) {
+	if a.wa == nil {
+		return SendTextResult{}, fmt.Errorf("whatsapp client not initialized")
+	}
+	msgID, err := a.wa.SendText(ctx, to, message)
+	if err != nil {
+		return SendTextResult{}, err
+	}
+
+	now := time.Now().UTC()
+	chatName := a.wa.ResolveChatName(ctx, to, "")
+	kind := chatKind(to)
+	_ = a.db.UpsertChat(to.String(), kind, chatName, now)
+	_ = a.db.UpsertMessage(store.UpsertMessageParams{
+		ChatJID:    to.String(),
+		ChatName:   chatName,
+		MsgID:      string(msgID),
+		SenderJID:  "",
+		SenderName: "me",
+		Timestamp:  now,
+		FromMe:     true,
+		Text:       message,
+	})
+
+	return SendTextResult{
+		MsgID:    string(msgID),
+		ChatJID:  to.String(),
+		ChatName: chatName,
+	}, nil
+}
+
+// SendFileAndRecord uploads a file, sends the appropriate media/document
+// message, and records the outbound row in the local DB. Used by both
+// `wacli send file` (in-process) and the daemon's IPC handler.
+func (a *App) SendFileAndRecord(ctx context.Context, to types.JID, filePath, filename, caption, mimeOverride string) (SendFileResult, error) {
+	if a.wa == nil {
+		return SendFileResult{}, fmt.Errorf("whatsapp client not initialized")
+	}
+
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return "", nil, err
+		return SendFileResult{}, err
 	}
 
 	name := strings.TrimSpace(filename)
@@ -32,7 +89,7 @@ func sendFile(ctx context.Context, a interface {
 	}
 	mimeType := strings.TrimSpace(mimeOverride)
 	if mimeType == "" {
-		// Use filePath for MIME detection, not the display name override
+		// Use filePath for MIME detection, not the display name override.
 		mimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(filePath)))
 	}
 	if mimeType == "" {
@@ -57,9 +114,9 @@ func sendFile(ctx context.Context, a interface {
 		uploadType, _ = wa.MediaTypeFromString("audio")
 	}
 
-	up, err := a.WA().Upload(ctx, data, uploadType)
+	up, err := a.wa.Upload(ctx, data, uploadType)
 	if err != nil {
-		return "", nil, err
+		return SendFileResult{}, err
 	}
 
 	now := time.Now().UTC()
@@ -114,18 +171,18 @@ func sendFile(ctx context.Context, a interface {
 		}
 	}
 
-	id, err := a.WA().SendProtoMessage(ctx, to, msg)
+	id, err := a.wa.SendProtoMessage(ctx, to, msg)
 	if err != nil {
-		return "", nil, err
+		return SendFileResult{}, err
 	}
 
-	chatName := a.WA().ResolveChatName(ctx, to, "")
-	kind := chatKindFromJID(to)
-	_ = a.DB().UpsertChat(to.String(), kind, chatName, now)
-	_ = a.DB().UpsertMessage(store.UpsertMessageParams{
+	chatName := a.wa.ResolveChatName(ctx, to, "")
+	kind := chatKind(to)
+	_ = a.db.UpsertChat(to.String(), kind, chatName, now)
+	_ = a.db.UpsertMessage(store.UpsertMessageParams{
 		ChatJID:       to.String(),
 		ChatName:      chatName,
-		MsgID:         id,
+		MsgID:         string(id),
 		SenderJID:     "",
 		SenderName:    "me",
 		Timestamp:     now,
@@ -142,22 +199,12 @@ func sendFile(ctx context.Context, a interface {
 		FileLength:    up.FileLength,
 	})
 
-	return id, map[string]string{
-		"name":      name,
-		"mime_type": mimeType,
-		"media":     mediaType,
+	return SendFileResult{
+		MsgID:     string(id),
+		ChatJID:   to.String(),
+		ChatName:  chatName,
+		Filename:  name,
+		MimeType:  mimeType,
+		MediaType: mediaType,
 	}, nil
-}
-
-func chatKindFromJID(j types.JID) string {
-	if j.Server == types.GroupServer {
-		return "group"
-	}
-	if j.IsBroadcastList() {
-		return "broadcast"
-	}
-	if j.Server == types.DefaultUserServer {
-		return "dm"
-	}
-	return "unknown"
 }
