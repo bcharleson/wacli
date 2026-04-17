@@ -349,6 +349,27 @@ func (c *Client) Logout(ctx context.Context) error {
 	return cli.Logout(ctx)
 }
 
+// PairPhone links this device using a phone number instead of QR code.
+// Returns an 8-digit pairing code the user enters on their phone.
+func (c *Client) PairPhone(ctx context.Context, phone string) (string, error) {
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil {
+		return "", fmt.Errorf("whatsapp client is not initialized")
+	}
+
+	if err := cli.ConnectContext(ctx); err != nil {
+		return "", fmt.Errorf("connect: %w", err)
+	}
+
+	code, err := cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	if err != nil {
+		return "", fmt.Errorf("pair phone: %w", err)
+	}
+	return code, nil
+}
+
 // Reconnect loop helper.
 func (c *Client) ReconnectWithBackoff(ctx context.Context, minDelay, maxDelay time.Duration) error {
 	delay := minDelay
